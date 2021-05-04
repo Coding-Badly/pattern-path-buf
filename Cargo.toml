@@ -1,0 +1,7 @@
+[package]
+name = "pattern_path_buf"
+version = "0.1.0"
+authors = ["brian-cook <brian.cook@gremlin.com>"]
+edition = "2018"
+
+[dependencies]
