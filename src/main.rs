@@ -9,27 +9,46 @@ use std::os::windows::ffi::OsStringExt;
 use std::os::windows::ffi::OsStrExt;
 
 enum Fragment {
-    Literal(Vec<u16>),  // u8 on Linux
+    Literal(Vec<u16>),  // u8 on Unix
     ReplacementMarker
 }
 
-const LEFT_CURLY: u16 = '{' as u16;
-const RIGHT_CURLY: u16 = '}' as u16;
-
-struct FragmenstBuilder {
+struct Fragments {
     fragments: Vec<Fragment>,
+    overhead_for_literals: usize,
+    replacement_markers: usize,
+}
+
+impl Fragments {
+    fn resolve(&self, replacement: &str) -> OsString {
+        let replacement: Vec<u16> = OsStr::new(replacement).encode_wide().collect();
+        let raw_size = self.overhead_for_literals + (self.replacement_markers * replacement.len());
+        let mut raw: Vec<u16> = Vec::with_capacity(raw_size);
+        for fragment in self.fragments.iter() {
+            match fragment {
+                Fragment::Literal(literal) => raw.extend_from_slice(&literal[..]),
+                Fragment::ReplacementMarker => raw.extend_from_slice(&replacement[..]),
+            }
+        }
+        assert!(raw.len() == raw_size);
+        OsString::from_wide(&raw[..])
+    }
+}
+
+struct FragmentsBuilder {
+    fragments: Fragments,
     pending: Option<Vec<u16>>,
 }
 
-enum ScanningState {
-    HaveNothing(usize),
-    HaveLeft(usize, usize),
-}
-
-impl FragmenstBuilder {
+impl FragmentsBuilder {
     fn new() -> Self {
-        Self {
+        let fragments = Fragments {
             fragments: Vec::new(),
+            overhead_for_literals: 0,
+            replacement_markers: 0,
+        };
+        Self {
+            fragments,
             pending: None,
         }
     }
@@ -40,62 +59,34 @@ impl FragmenstBuilder {
             self.pending = Some(vec![code_unit]);
         }
     }
-    fn add_rep
-/*
-    fn from(segment: &OsStr) -> Self {
-        let mut fragments: Vec<Fragment> = Vec::new();
-        let mut pending: Option<Vec<u16>> = None;
-        let mut have_left = false;
-        for (index, code_unit) in segment.encode_wide().enumerate() {
-            if have_left {
-            }
-            else {
-                if code_unit == LEFT_CURLY {
-                    have_left = true;
-                }
-                else {
-                    
-                }
-            }
-/*
-            match scanning_state {
-                ScanningState::HaveNothing(anchor) => {
-                    if code_unit == LEFT_CURLY {
-                        scanning_state = ScanningState::HaveLeft(anchor, index);
-                    }
-                },
-                ScanningState::HaveLeft(left, right) => {
-                    if code_unit == RIGHT_CURLY {
-                        if left != right {
-                            println!("  ({}..{})", left, right);
-                        }
-                        fragments.push(Fragment::ReplacementMarker);
-                        scanning_state = ScanningState::HaveNothing(index+1);
-                    }
-                    else {
-                        scanning_state = ScanningState::HaveNothing(left);
-                    }
-                },
-            }
-*/
-        }
-        Self {
-            
+    fn add_replacement_marker(&mut self) {
+        self.push_pending();
+        self.fragments.fragments.push(Fragment::ReplacementMarker);
+        self.fragments.replacement_markers += 1;
+    }
+    fn has_replacement_marker(&self) -> bool {
+        self.fragments.replacement_markers != 0
+    }
+    fn push_pending(&mut self) {
+        if let Some(mut pending) = self.pending.take() {
+            pending.shrink_to_fit();
+            self.fragments.overhead_for_literals += pending.len();
+            self.fragments.fragments.push(Fragment::Literal(pending));
         }
     }
-*/
 }
 
-impl Into<Vec<Fragment>> for FragmenstBuilder {
-    fn into(mut self) -> Vec<Fragment> {
-        Vec::new()
+impl Into<Fragments> for FragmentsBuilder {
+    fn into(mut self) -> Fragments {
+        self.push_pending();
+        self.fragments
     }
 }
 
 enum Segment {
     Literal(PathBuf),
     CleanPattern(String),
-    // DirtyPattern(Vec<Fragment>),
+    DirtyPattern(Fragments),
 }
 
 struct SegmentsBuilder {
@@ -110,11 +101,13 @@ impl SegmentsBuilder {
             pending: None,
         }
     }
-    fn add_pattern(&mut self, segment: &str) {
-        if let Some(pending) = self.pending.take() {
-            self.segments.push(Segment::Literal(pending));
-        }
+    fn add_clean_pattern(&mut self, segment: &str) {
+        self.push_pending();
         self.segments.push(Segment::CleanPattern(segment.to_string()));
+    }
+    fn add_dirty_pattern(&mut self, segment: Fragments) {
+        self.push_pending();
+        self.segments.push(Segment::DirtyPattern(segment));
     }
     fn add_literal(&mut self, segment: &OsStr) {
         if let Some(pending) = &mut self.pending {
@@ -123,13 +116,16 @@ impl SegmentsBuilder {
             self.pending = Some(PathBuf::from(segment));
         }
     }
+    fn push_pending(&mut self) {
+        if let Some(pending) = self.pending.take() {
+            self.segments.push(Segment::Literal(pending));
+        }
+    }
 }
 
 impl Into<Vec<Segment>> for SegmentsBuilder {
     fn into(mut self) -> Vec<Segment> {
-        if let Some(pending) = self.pending.take() {
-            self.segments.push(Segment::Literal(pending));
-        }
+        self.push_pending();
         self.segments
     }
 }
@@ -137,6 +133,14 @@ impl Into<Vec<Segment>> for SegmentsBuilder {
 struct PatternPathBuf {
     segments: Vec<Segment>,
 }
+
+enum ScanningState {
+    HaveNothing,
+    HaveLeftCurly,
+}
+
+const LEFT_CURLY: u16 = '{' as u16;
+const RIGHT_CURLY: u16 = '}' as u16;
 
 impl PatternPathBuf {
     fn new<P>(path: P) -> Self
@@ -148,12 +152,47 @@ impl PatternPathBuf {
         for segment in path.as_ref().iter() {
             if let Some(valid_utf_8) = segment.to_str() {
                 if valid_utf_8.contains("{}") {
-                    segments_builder.add_pattern(valid_utf_8);
+                    segments_builder.add_clean_pattern(valid_utf_8);
                 } else {
                     segments_builder.add_literal(segment);
                 }
             } else {
-                segments_builder.add_literal(segment);
+                let mut fragments_builder = FragmentsBuilder::new();
+                let mut scanning_state = ScanningState::HaveNothing;
+
+                for code_unit in segment.encode_wide() {
+                    match scanning_state {
+                        ScanningState::HaveNothing => {
+                            if code_unit == LEFT_CURLY {
+                                scanning_state = ScanningState::HaveLeftCurly;
+                            }
+                            else {
+                                fragments_builder.add_code_unit(code_unit);
+                            }
+                        },
+                        ScanningState::HaveLeftCurly => {
+                            if code_unit == RIGHT_CURLY {
+                                fragments_builder.add_replacement_marker();
+                            }
+                            else {
+                                fragments_builder.add_code_unit(LEFT_CURLY);
+                                fragments_builder.add_code_unit(code_unit);
+                            }
+                            scanning_state = ScanningState::HaveNothing;
+                        },
+                    }
+                }
+                match scanning_state {
+                    ScanningState::HaveLeftCurly =>
+                        fragments_builder.add_code_unit(LEFT_CURLY),
+                    _ => {},
+                }
+                if fragments_builder.has_replacement_marker() {
+                    segments_builder.add_dirty_pattern(fragments_builder.into());
+                }
+                else {
+                    segments_builder.add_literal(segment);
+                }
             }
         }
         Self {
@@ -168,11 +207,21 @@ impl PatternPathBuf {
                 Segment::CleanPattern(s) => {
                     rv.push(s.replace("{}", replacement));
                 }
+                Segment::DirtyPattern(f) => {
+                    rv.push(f.resolve(replacement));
+                }
             }
         }
         rv
     }
 }
+
+/* rmv
+enum ScanningState {
+    HaveNothing(usize),
+    HaveLeft(usize, usize),
+}
+*/
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
@@ -183,6 +232,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 //    let source = [0x0066, 0x006f, 0xD800, 0x006f, 0x007B, 0x007D, 0x0062, 0x0061, 0x0072];
 //    let os_string = OsString::from_wide(&source[..]);
 
+/* rmv
 //    let os_string = OsString::from("daemon.log.{}.gz");
 //    let os_string = OsString::from("daemon.log.gz");
 //    let os_string = OsString::from("daemon.log{.gz");
@@ -227,6 +277,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  ({}..)", left);
         }
     }
+*/
 
 /*
     let path_buf = PathBuf::from(os_string);
@@ -389,7 +440,12 @@ mod unit_tests {
         }
 
         fn simple_bad_string_with_marker() -> OsString {
-            let source = [0x0066, 0x006f, 0xD800, 0x006f, 0x007B, 0x007D, 0x0062, 0x0061, 0x0072];
+            let source = [0x0066, 0x006f, 0xD800, 0x006f, LEFT_CURLY, RIGHT_CURLY, 0x0062, 0x0061, 0x0072];
+            OsString::from_wide(&source[..])
+        }
+
+        fn crazy_bad_string_with_marker() -> OsString {
+            let source = [LEFT_CURLY, 0x0066, 0x006f, 0xD800, 0x006f, LEFT_CURLY, RIGHT_CURLY, 0x0062, 0x0061, 0x0072, LEFT_CURLY];
             OsString::from_wide(&source[..])
         }
 
@@ -421,20 +477,37 @@ mod unit_tests {
         }
 
         #[test]
-        fn bad_with_marker_is_literal() {
+        fn bad_with_marker_is_ok() {
             let mut path = PathBuf::from("C:\\ProgramData\\Gremlin\\Agent");
             path.push(simple_bad_string_with_marker());
             path.push("daemon.log.{}.gz");
             let tm = PatternPathBuf::new(path);
-            assert!(tm.segments.len() == 2);
+            assert!(tm.segments.len() == 3);
             let r = tm.resolve("0");
             assert!(r.to_str().is_none());
             let s = format!("{:?}", r);
-            assert!(s == "\"C:\\\\ProgramData\\\\Gremlin\\\\Agent\\\\fo\\u{d800}o{}bar\\\\daemon.log.0.gz\"");
+            assert!(s == "\"C:\\\\ProgramData\\\\Gremlin\\\\Agent\\\\fo\\u{d800}o0bar\\\\daemon.log.0.gz\"");
             let r = tm.resolve("99");
             assert!(r.to_str().is_none());
             let s = format!("{:?}", r);
-            assert!(s == "\"C:\\\\ProgramData\\\\Gremlin\\\\Agent\\\\fo\\u{d800}o{}bar\\\\daemon.log.99.gz\"");
+            assert!(s == "\"C:\\\\ProgramData\\\\Gremlin\\\\Agent\\\\fo\\u{d800}o99bar\\\\daemon.log.99.gz\"");
+        }
+
+        #[test]
+        fn crazy_with_marker_is_ok() {
+            let mut path = PathBuf::from("C:\\ProgramData\\Gremlin\\Agent");
+            path.push(crazy_bad_string_with_marker());
+            path.push("daemon.log.{}.gz");
+            let tm = PatternPathBuf::new(path);
+            assert!(tm.segments.len() == 3);
+            let r = tm.resolve("0");
+            assert!(r.to_str().is_none());
+            let s = format!("{:?}", r);
+            assert!(s == "\"C:\\\\ProgramData\\\\Gremlin\\\\Agent\\\\{fo\\u{d800}o0bar{\\\\daemon.log.0.gz\"");
+            let r = tm.resolve("whatever");
+            assert!(r.to_str().is_none());
+            let s = format!("{:?}", r);
+            assert!(s == "\"C:\\\\ProgramData\\\\Gremlin\\\\Agent\\\\{fo\\u{d800}owhateverbar{\\\\daemon.log.whatever.gz\"");
         }
     }
 }
