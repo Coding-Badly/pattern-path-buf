@@ -1,3 +1,4 @@
+/*
 use std::ffi::OsString;
 use std::io::Write;
 use std::os::windows::ffi::OsStringExt;
@@ -42,5 +43,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ppb = PatternPathBuf::new(pb);
     exercise_pattern_path_buf(&ppb)?;
 
+    Ok(())
+}
+*/
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!();
     Ok(())
 }

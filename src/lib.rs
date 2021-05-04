@@ -1,9 +1,13 @@
 use std::ffi::{OsStr, OsString};
-use std::os::windows::ffi::{OsStrExt, OsStringExt};
+// nfx:win use std::os::windows::ffi::{OsStrExt, OsStringExt};
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
+//type CodeUnit = u16;
+type CodeUnit = u8;
+
 enum Fragment {
-    Literal(Vec<u16>),  // u8 on Unix
+    Literal(Vec<CodeUnit>),
     ReplacementMarker
 }
 
@@ -15,9 +19,10 @@ struct Fragments {
 
 impl Fragments {
     fn resolve(&self, replacement: &str) -> OsString {
-        let replacement: Vec<u16> = OsStr::new(replacement).encode_wide().collect();
+//        let replacement: Vec<CodeUnit> = OsStr::new(replacement).encode_wide().collect();
+        let replacement: &[CodeUnit] = replacement.as_bytes();
         let raw_size = self.overhead_for_literals + (self.replacement_markers * replacement.len());
-        let mut raw: Vec<u16> = Vec::with_capacity(raw_size);
+        let mut raw: Vec<CodeUnit> = Vec::with_capacity(raw_size);
         for fragment in self.fragments.iter() {
             match fragment {
                 Fragment::Literal(literal) => raw.extend_from_slice(&literal[..]),
@@ -25,13 +30,14 @@ impl Fragments {
             }
         }
         assert!(raw.len() == raw_size);
-        OsString::from_wide(&raw[..])
+//        OsString::from_wide(&raw[..])
+        OsString::from_vec(raw)
     }
 }
 
 struct FragmentsBuilder {
     fragments: Fragments,
-    pending: Option<Vec<u16>>,
+    pending: Option<Vec<CodeUnit>>,
 }
 
 impl FragmentsBuilder {
@@ -46,7 +52,7 @@ impl FragmentsBuilder {
             pending: None,
         }
     }
-    fn add_code_unit(&mut self, code_unit: u16) {
+    fn add_code_unit(&mut self, code_unit: CodeUnit) {
         if let Some(pending) = &mut self.pending {
             pending.push(code_unit);
         } else {
@@ -133,8 +139,8 @@ enum ScanningState {
     HaveLeftCurly,
 }
 
-pub const LEFT_CURLY: u16 = '{' as u16;
-pub const RIGHT_CURLY: u16 = '}' as u16;
+pub const LEFT_CURLY: CodeUnit = '{' as CodeUnit;
+pub const RIGHT_CURLY: CodeUnit = '}' as CodeUnit;
 
 impl PatternPathBuf {
     pub fn new<P>(path: P) -> Self
@@ -154,23 +160,24 @@ impl PatternPathBuf {
                 let mut fragments_builder = FragmentsBuilder::new();
                 let mut scanning_state = ScanningState::HaveNothing;
 
-                for code_unit in segment.encode_wide() {
+//                for code_unit in segment.encode_wide() {
+                for code_unit in segment.as_bytes() {
                     match scanning_state {
                         ScanningState::HaveNothing => {
-                            if code_unit == LEFT_CURLY {
+                            if *code_unit == LEFT_CURLY {
                                 scanning_state = ScanningState::HaveLeftCurly;
                             }
                             else {
-                                fragments_builder.add_code_unit(code_unit);
+                                fragments_builder.add_code_unit(*code_unit);
                             }
                         },
                         ScanningState::HaveLeftCurly => {
-                            if code_unit == RIGHT_CURLY {
+                            if *code_unit == RIGHT_CURLY {
                                 fragments_builder.add_replacement_marker();
                             }
                             else {
                                 fragments_builder.add_code_unit(LEFT_CURLY);
-                                fragments_builder.add_code_unit(code_unit);
+                                fragments_builder.add_code_unit(*code_unit);
                             }
                             scanning_state = ScanningState::HaveNothing;
                         },
@@ -298,11 +305,11 @@ mod unit_tests {
     mod for_unix {
         use super::*;
         use std::ffi::OsString;
-        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::ffi::OsStringExt;
 
         fn simple_bad_string() -> OsString {
-            let source = [0x66, 0x6f, 0x80, 0x6f];
-            OsString::from_bytes(&source[..])
+            let source = vec![0x66, 0x6f, 0x80, 0x6f];
+            OsString::from_vec(source)
         }
 
         #[test]
