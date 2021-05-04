@@ -13,6 +13,85 @@ enum Fragment {
     ReplacementMarker
 }
 
+const LEFT_CURLY: u16 = '{' as u16;
+const RIGHT_CURLY: u16 = '}' as u16;
+
+struct FragmenstBuilder {
+    fragments: Vec<Fragment>,
+    pending: Option<Vec<u16>>,
+}
+
+enum ScanningState {
+    HaveNothing(usize),
+    HaveLeft(usize, usize),
+}
+
+impl FragmenstBuilder {
+    fn new() -> Self {
+        Self {
+            fragments: Vec::new(),
+            pending: None,
+        }
+    }
+    fn add_code_unit(&mut self, code_unit: u16) {
+        if let Some(pending) = &mut self.pending {
+            pending.push(code_unit);
+        } else {
+            self.pending = Some(vec![code_unit]);
+        }
+    }
+    fn add_rep
+/*
+    fn from(segment: &OsStr) -> Self {
+        let mut fragments: Vec<Fragment> = Vec::new();
+        let mut pending: Option<Vec<u16>> = None;
+        let mut have_left = false;
+        for (index, code_unit) in segment.encode_wide().enumerate() {
+            if have_left {
+            }
+            else {
+                if code_unit == LEFT_CURLY {
+                    have_left = true;
+                }
+                else {
+                    
+                }
+            }
+/*
+            match scanning_state {
+                ScanningState::HaveNothing(anchor) => {
+                    if code_unit == LEFT_CURLY {
+                        scanning_state = ScanningState::HaveLeft(anchor, index);
+                    }
+                },
+                ScanningState::HaveLeft(left, right) => {
+                    if code_unit == RIGHT_CURLY {
+                        if left != right {
+                            println!("  ({}..{})", left, right);
+                        }
+                        fragments.push(Fragment::ReplacementMarker);
+                        scanning_state = ScanningState::HaveNothing(index+1);
+                    }
+                    else {
+                        scanning_state = ScanningState::HaveNothing(left);
+                    }
+                },
+            }
+*/
+        }
+        Self {
+            
+        }
+    }
+*/
+}
+
+impl Into<Vec<Fragment>> for FragmenstBuilder {
+    fn into(mut self) -> Vec<Fragment> {
+        Vec::new()
+    }
+}
+
 enum Segment {
     Literal(PathBuf),
     CleanPattern(String),
@@ -95,11 +174,6 @@ impl PatternPathBuf {
     }
 }
 
-enum ScanningState {
-    HaveNothing(usize),
-    HaveLeft(usize, usize),
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
@@ -118,9 +192,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 //    let os_string = OsString::from("daemon.log.gz{}");
 //    let os_string = OsString::from("daemon.log.g{}z");
     let os_string = OsString::from("{}daemon.{}.log.{}.gz");
-
-    const LEFT_CURLY: u16 = '{' as u16;
-    const RIGHT_CURLY: u16 = '}' as u16;
 
     let mut scanning_state = ScanningState::HaveNothing(0);
 
