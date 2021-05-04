@@ -8,9 +8,15 @@ use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 use std::os::windows::ffi::OsStrExt;
 
+enum Fragment {
+    Literal(Vec<u16>),  // u8 on Linux
+    ReplacementMarker
+}
+
 enum Segment {
     Literal(PathBuf),
-    Pattern(String),
+    CleanPattern(String),
+    // DirtyPattern(Vec<Fragment>),
 }
 
 struct SegmentsBuilder {
@@ -29,7 +35,7 @@ impl SegmentsBuilder {
         if let Some(pending) = self.pending.take() {
             self.segments.push(Segment::Literal(pending));
         }
-        self.segments.push(Segment::Pattern(segment.to_string()));
+        self.segments.push(Segment::CleanPattern(segment.to_string()));
     }
     fn add_literal(&mut self, segment: &OsStr) {
         if let Some(pending) = &mut self.pending {
@@ -80,7 +86,7 @@ impl PatternPathBuf {
         for segment in self.segments.iter() {
             match segment {
                 Segment::Literal(p) => rv.push(p),
-                Segment::Pattern(s) => {
+                Segment::CleanPattern(s) => {
                     rv.push(s.replace("{}", replacement));
                 }
             }
