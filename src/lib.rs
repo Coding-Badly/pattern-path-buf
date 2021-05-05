@@ -1,13 +1,120 @@
 use std::ffi::{OsStr, OsString};
-// nfx:win use std::os::windows::ffi::{OsStrExt, OsStringExt};
-use std::os::unix::ffi::{OsStrExt, OsStringExt};
+// rmv use std::os::windows::ffi::{OsStringExt};
+// rmv use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
-//type CodeUnit = u16;
-type CodeUnit = u8;
+#[cfg(unix)]
+mod os {
+    use std::ffi::{OsStr, OsString};
+
+    pub type CodeUnit = u8;
+
+    pub struct CodeUnitIter<'a> {
+        as_bytes: &'a [u8],
+        current: usize,
+    }
+
+    impl<'a> CodeUnitIter<'a> {
+        pub fn new(str: &'a OsStr) -> Self {
+            Self {
+                as_bytes: str.as_bytes(),
+                current: 0,
+            }
+        }
+    }
+
+    impl<'a> Iterator for CodeUnitIter<'a> {
+        type Item = CodeUnit;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            let rv;
+            if self.current < self.as_bytes.len() {
+                rv = Some(self.as_bytes[self.current]);
+                self.current += 1;
+            }
+            else {
+                rv = None;
+            }
+            rv
+        }
+    }
+
+    pub struct CodeUnitsFromReplacement<'a> {
+        replacement: &'a [CodeUnit],
+    }
+
+    impl<'a> CodeUnitsFromReplacement<'a> {
+        fn new(replacement: &'a str) -> Self {
+            Self {
+                replacement: replacement.as_bytes(),
+            }
+        }
+        pub fn replacement(&self) -> &[CodeUnit] {
+            self.replacement
+        }
+        pub fn len(&self) -> usize {
+            self.replacement.len()
+        }
+    }
+
+    pub fn code_units_to_os_string(raw: Vec<CodeUnit>) -> OsString {
+        OsString::from_vec(raw)
+    }
+}
+
+#[cfg(windows)]
+mod os {
+    use std::ffi::{OsStr, OsString};
+    use std::os::windows::ffi::{EncodeWide, OsStrExt, OsStringExt};
+
+    pub type CodeUnit = u16;
+
+    pub struct CodeUnitIter<'a> {
+        encode_wide: EncodeWide<'a>,
+    }
+
+    impl<'a> CodeUnitIter<'a> {
+        pub fn new(str: &'a OsStr) -> Self {
+            Self {
+                encode_wide: str.encode_wide(),
+            }
+        }
+    }
+
+    impl<'a> Iterator for CodeUnitIter<'a> {
+        type Item = CodeUnit;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.encode_wide.next()
+        }
+    }
+
+    pub struct CodeUnitsFromReplacement {
+        replacement: Vec<CodeUnit>,
+    }
+
+    impl CodeUnitsFromReplacement {
+        pub fn new(replacement: &str) -> Self {
+            let replacement: Vec<CodeUnit> = OsStr::new(replacement).encode_wide().collect();
+            Self {
+                replacement,
+            }
+        }
+        pub fn len(&self) -> usize {
+            self.replacement.len()
+        }
+        pub fn replacement(&self) -> &[CodeUnit] {
+            &self.replacement[..]
+        }
+    }
+
+    pub fn code_units_to_os_string(raw: Vec<CodeUnit>) -> OsString {
+        OsString::from_wide(&raw[..])
+    }
+}
 
 enum Fragment {
-    Literal(Vec<CodeUnit>),
+    Literal(Vec<os::CodeUnit>),
     ReplacementMarker
 }
 
@@ -19,25 +126,27 @@ struct Fragments {
 
 impl Fragments {
     fn resolve(&self, replacement: &str) -> OsString {
-//        let replacement: Vec<CodeUnit> = OsStr::new(replacement).encode_wide().collect();
-        let replacement: &[CodeUnit] = replacement.as_bytes();
-        let raw_size = self.overhead_for_literals + (self.replacement_markers * replacement.len());
-        let mut raw: Vec<CodeUnit> = Vec::with_capacity(raw_size);
+        let cufp = os::CodeUnitsFromReplacement::new(replacement);
+        // rmv let replacement: Vec<os::CodeUnit> = OsStr::new(replacement).encode_wide().collect();
+        // rmv let replacement: &[os::CodeUnit] = replacement.as_bytes();
+        let raw_size = self.overhead_for_literals + (self.replacement_markers * cufp.len());
+        let mut raw: Vec<os::CodeUnit> = Vec::with_capacity(raw_size);
         for fragment in self.fragments.iter() {
             match fragment {
                 Fragment::Literal(literal) => raw.extend_from_slice(&literal[..]),
-                Fragment::ReplacementMarker => raw.extend_from_slice(&replacement[..]),
+                Fragment::ReplacementMarker => raw.extend_from_slice(cufp.replacement()),
             }
         }
         assert!(raw.len() == raw_size);
-//        OsString::from_wide(&raw[..])
-        OsString::from_vec(raw)
+        os::code_units_to_os_string(raw)
+        // rmv OsString::from_wide(&raw[..])
+        // rmv OsString::from_vec(raw)
     }
 }
 
 struct FragmentsBuilder {
     fragments: Fragments,
-    pending: Option<Vec<CodeUnit>>,
+    pending: Option<Vec<os::CodeUnit>>,
 }
 
 impl FragmentsBuilder {
@@ -52,7 +161,7 @@ impl FragmentsBuilder {
             pending: None,
         }
     }
-    fn add_code_unit(&mut self, code_unit: CodeUnit) {
+    fn add_code_unit(&mut self, code_unit: os::CodeUnit) {
         if let Some(pending) = &mut self.pending {
             pending.push(code_unit);
         } else {
@@ -139,8 +248,8 @@ enum ScanningState {
     HaveLeftCurly,
 }
 
-pub const LEFT_CURLY: CodeUnit = '{' as CodeUnit;
-pub const RIGHT_CURLY: CodeUnit = '}' as CodeUnit;
+pub const LEFT_CURLY: os::CodeUnit = '{' as os::CodeUnit;
+pub const RIGHT_CURLY: os::CodeUnit = '}' as os::CodeUnit;
 
 impl PatternPathBuf {
     pub fn new<P>(path: P) -> Self
@@ -160,24 +269,25 @@ impl PatternPathBuf {
                 let mut fragments_builder = FragmentsBuilder::new();
                 let mut scanning_state = ScanningState::HaveNothing;
 
-//                for code_unit in segment.encode_wide() {
-                for code_unit in segment.as_bytes() {
+                let code_unit_iter = os::CodeUnitIter::new(segment);
+                for code_unit in code_unit_iter {
+                // rmv for code_unit in segment.as_bytes() {
                     match scanning_state {
                         ScanningState::HaveNothing => {
-                            if *code_unit == LEFT_CURLY {
+                            if code_unit == LEFT_CURLY {
                                 scanning_state = ScanningState::HaveLeftCurly;
                             }
                             else {
-                                fragments_builder.add_code_unit(*code_unit);
+                                fragments_builder.add_code_unit(code_unit);
                             }
                         },
                         ScanningState::HaveLeftCurly => {
-                            if *code_unit == RIGHT_CURLY {
+                            if code_unit == RIGHT_CURLY {
                                 fragments_builder.add_replacement_marker();
                             }
                             else {
                                 fragments_builder.add_code_unit(LEFT_CURLY);
-                                fragments_builder.add_code_unit(*code_unit);
+                                fragments_builder.add_code_unit(code_unit);
                             }
                             scanning_state = ScanningState::HaveNothing;
                         },

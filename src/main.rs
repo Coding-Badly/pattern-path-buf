@@ -1,14 +1,20 @@
-/*
-use std::ffi::OsString;
 use std::io::Write;
-use std::os::windows::ffi::OsStringExt;
 use std::path::PathBuf;
 
-use pattern_path_buf::{LEFT_CURLY, PatternPathBuf, RIGHT_CURLY};
+use pattern_path_buf::{PatternPathBuf};
 
-fn crazy_bad_string_with_marker() -> OsString {
-    let source = [LEFT_CURLY, 0x0066, 0x006f, 0xD800, 0x006f, LEFT_CURLY, RIGHT_CURLY, 0x0062, 0x0061, 0x0072, LEFT_CURLY];
-    OsString::from_wide(&source[..])
+#[cfg(windows)]
+mod os {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    use pattern_path_buf::{LEFT_CURLY, RIGHT_CURLY};
+
+//rmv    pub type CodeUnit = u8;  // rmv
+
+    pub fn crazy_bad_string_with_marker() -> OsString {
+        let source = [LEFT_CURLY, 0x0066, 0x006f, 0xD800, 0x006f, LEFT_CURLY, RIGHT_CURLY, 0x0062, 0x0061, 0x0072, LEFT_CURLY];
+        OsString::from_wide(&source[..])
+    }
 }
 
 fn exercise_pattern_path_buf(ppb: &PatternPathBuf) -> Result<(), Box<dyn std::error::Error>> {
@@ -38,16 +44,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut pb = PathBuf::new();
     pb.push(".");
     pb.push("tmp");
-    pb.push(crazy_bad_string_with_marker());
+    pb.push(os::crazy_bad_string_with_marker());
     pb.push("daemon.{}.log.gz");
     let ppb = PatternPathBuf::new(pb);
     exercise_pattern_path_buf(&ppb)?;
 
-    Ok(())
-}
-*/
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!();
     Ok(())
 }
