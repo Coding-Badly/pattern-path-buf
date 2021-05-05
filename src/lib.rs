@@ -112,11 +112,13 @@ mod os {
     }
 }
 
+#[derive(Clone)]
 enum Fragment {
     Literal(Vec<os::CodeUnit>),
     ReplacementMarker
 }
 
+#[derive(Clone)]
 struct Fragments {
     fragments: Vec<Fragment>,
     overhead_for_literals: usize,
@@ -187,6 +189,7 @@ impl Into<Fragments> for FragmentsBuilder {
     }
 }
 
+#[derive(Clone)]
 enum Segment {
     Literal(PathBuf),
     CleanPattern(String),
@@ -234,8 +237,10 @@ impl Into<Vec<Segment>> for SegmentsBuilder {
     }
 }
 
+#[derive(Clone)]
 pub struct PatternPathBuf {
     segments: Vec<Segment>,
+    has_pattern: bool,
 }
 
 enum ScanningState {
@@ -252,11 +257,13 @@ impl PatternPathBuf {
         P: AsRef<Path>,
     {
         let mut segments_builder = SegmentsBuilder::new();
+        let mut has_pattern = false;
 
         for segment in path.as_ref().iter() {
             if let Some(valid_utf_8) = segment.to_str() {
                 if valid_utf_8.contains("{}") {
                     segments_builder.add_clean_pattern(valid_utf_8);
+                    has_pattern = true;
                 } else {
                     segments_builder.add_literal(segment);
                 }
@@ -294,6 +301,7 @@ impl PatternPathBuf {
                 }
                 if fragments_builder.has_replacement_marker() {
                     segments_builder.add_dirty_pattern(fragments_builder.into());
+                    has_pattern = true;
                 }
                 else {
                     segments_builder.add_literal(segment);
@@ -302,7 +310,11 @@ impl PatternPathBuf {
         }
         Self {
             segments: segments_builder.into(),
+            has_pattern,
         }
+    }
+    pub fn has_pattern(&self) -> bool {
+        self.has_pattern
     }
     pub fn resolve(&self, replacement: &str) -> PathBuf {
         let mut rv = PathBuf::new();

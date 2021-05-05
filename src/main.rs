@@ -45,10 +45,28 @@ fn exercise_pattern_path_buf(ppb: &PatternPathBuf) -> Result<(), Box<dyn std::er
     Ok(())
 }
 
+fn use_thread(ppb: PatternPathBuf) -> std::thread::JoinHandle<Result<(), std::io::Error>> {
+    let range = 10..12;
+    std::thread::spawn(move || {
+        for index in range {
+            let replacement = index.to_string();
+            let r = ppb.resolve(&replacement);
+            if let Some(parent) = r.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let mut file = std::fs::File::create(&r)?;
+            file.write_all(b"Hello world from a thread!")?;
+            std::fs::remove_file(&r)?;
+        }
+        Ok(())
+    })
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     let ppb = PatternPathBuf::new("./tmp/daemon.{}.log.gz");
+    let handle = use_thread(ppb.clone());
     exercise_pattern_path_buf(&ppb)?;
 
     let mut pb = PathBuf::new();
@@ -58,6 +76,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     pb.push("daemon.{}.log.gz");
     let ppb = PatternPathBuf::new(pb);
     exercise_pattern_path_buf(&ppb)?;
+
+    handle.join().unwrap()?;
 
     Ok(())
 }
