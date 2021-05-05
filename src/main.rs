@@ -3,13 +3,23 @@ use std::path::PathBuf;
 
 use pattern_path_buf::{PatternPathBuf};
 
+#[cfg(unix)]
+mod os {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    use pattern_path_buf::{LEFT_CURLY, RIGHT_CURLY};
+
+    pub fn crazy_bad_string_with_marker() -> OsString {
+        let source = vec![LEFT_CURLY, 0x66, 0x6f, 0x80, 0x6f, LEFT_CURLY, RIGHT_CURLY, 0x62, 0x61, 0x72, LEFT_CURLY];
+        OsString::from_vec(source)
+    }
+}
+
 #[cfg(windows)]
 mod os {
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;
     use pattern_path_buf::{LEFT_CURLY, RIGHT_CURLY};
-
-//rmv    pub type CodeUnit = u8;  // rmv
 
     pub fn crazy_bad_string_with_marker() -> OsString {
         let source = [LEFT_CURLY, 0x0066, 0x006f, 0xD800, 0x006f, LEFT_CURLY, RIGHT_CURLY, 0x0062, 0x0061, 0x0072, LEFT_CURLY];

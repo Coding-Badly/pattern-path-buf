@@ -1,11 +1,10 @@
 use std::ffi::{OsStr, OsString};
-// rmv use std::os::windows::ffi::{OsStringExt};
-// rmv use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
 mod os {
     use std::ffi::{OsStr, OsString};
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
 
     pub type CodeUnit = u8;
 
@@ -44,7 +43,7 @@ mod os {
     }
 
     impl<'a> CodeUnitsFromReplacement<'a> {
-        fn new(replacement: &'a str) -> Self {
+        pub fn new(replacement: &'a str) -> Self {
             Self {
                 replacement: replacement.as_bytes(),
             }
@@ -127,8 +126,6 @@ struct Fragments {
 impl Fragments {
     fn resolve(&self, replacement: &str) -> OsString {
         let cufp = os::CodeUnitsFromReplacement::new(replacement);
-        // rmv let replacement: Vec<os::CodeUnit> = OsStr::new(replacement).encode_wide().collect();
-        // rmv let replacement: &[os::CodeUnit] = replacement.as_bytes();
         let raw_size = self.overhead_for_literals + (self.replacement_markers * cufp.len());
         let mut raw: Vec<os::CodeUnit> = Vec::with_capacity(raw_size);
         for fragment in self.fragments.iter() {
@@ -139,8 +136,6 @@ impl Fragments {
         }
         assert!(raw.len() == raw_size);
         os::code_units_to_os_string(raw)
-        // rmv OsString::from_wide(&raw[..])
-        // rmv OsString::from_vec(raw)
     }
 }
 
@@ -271,7 +266,6 @@ impl PatternPathBuf {
 
                 let code_unit_iter = os::CodeUnitIter::new(segment);
                 for code_unit in code_unit_iter {
-                // rmv for code_unit in segment.as_bytes() {
                     match scanning_state {
                         ScanningState::HaveNothing => {
                             if code_unit == LEFT_CURLY {
@@ -422,12 +416,75 @@ mod unit_tests {
             OsString::from_vec(source)
         }
 
+        fn simple_bad_string_with_marker() -> OsString {
+            let source = vec![0x66, 0x6f, 0x80, 0x6f, LEFT_CURLY, RIGHT_CURLY, 0x62, 0x61, 0x72];
+            OsString::from_vec(source)
+        }
+
+        fn crazy_bad_string_with_marker() -> OsString {
+            let source = vec![LEFT_CURLY, 0x66, 0x6f, 0x80, 0x6f, LEFT_CURLY, RIGHT_CURLY, 0x62, 0x61, 0x72, LEFT_CURLY];
+            OsString::from_vec(source)
+        }
+
         #[test]
         fn full_example_1_is_ok() {
             let tm = PatternPathBuf::new("/var/log/gremlin/daemon.log.{}.gz");
             assert!(tm.segments.len() == 2);
             let r = tm.resolve("0");
             assert!(r.to_str() == Some("/var/log/gremlin/daemon.log.0.gz"));
+        }
+
+        #[test]
+        fn mix_is_ok() {
+            let tm = PatternPathBuf::new(
+                "/var/log/gremlin/Agent{}/Middle{}Insert/daemon.log.{}.gz/pointless/tail");
+            assert!(tm.segments.len() == 5);
+            let r = tm.resolve("0");
+            assert!(r.to_str() == Some(
+                "/var/log/gremlin/Agent0/Middle0Insert/daemon.log.0.gz/pointless/tail"));
+        }
+
+        #[test]
+        fn simple_bad_is_ok() {
+            let tm = PatternPathBuf::new(simple_bad_string());
+            assert!(tm.segments.len() == 1);
+            let r = tm.resolve("0");
+            assert!(r.to_str().is_none());
+            assert!(r.to_string_lossy() == simple_bad_string().to_string_lossy());
+        }
+
+        #[test]
+        fn bad_with_marker_is_ok() {
+            let mut path = PathBuf::from("/var/log/gremlin/agent");
+            path.push(simple_bad_string_with_marker());
+            path.push("daemon.log.{}.gz");
+            let tm = PatternPathBuf::new(path);
+            assert!(tm.segments.len() == 3);
+            let r = tm.resolve("0");
+            assert!(r.to_str().is_none());
+            let s = format!("{:?}", r);
+            assert!(s == "\"/var/log/gremlin/agent/fo\\x80o0bar/daemon.log.0.gz\"");
+            let r = tm.resolve("99");
+            assert!(r.to_str().is_none());
+            let s = format!("{:?}", r);
+            assert!(s == "\"/var/log/gremlin/agent/fo\\x80o99bar/daemon.log.99.gz\"");
+        }
+
+        #[test]
+        fn crazy_with_marker_is_ok() {
+            let mut path = PathBuf::from("/var/log/gremlin/agent");
+            path.push(crazy_bad_string_with_marker());
+            path.push("daemon.log.{}.gz");
+            let tm = PatternPathBuf::new(path);
+            assert!(tm.segments.len() == 3);
+            let r = tm.resolve("0");
+            assert!(r.to_str().is_none());
+            let s = format!("{:?}", r);
+            assert!(s == "\"/var/log/gremlin/agent/{fo\\x80o0bar{/daemon.log.0.gz\"");
+            let r = tm.resolve("whatever");
+            assert!(r.to_str().is_none());
+            let s = format!("{:?}", r);
+            assert!(s == "\"/var/log/gremlin/agent/{fo\\x80owhateverbar{/daemon.log.whatever.gz\"");
         }
     }
 
